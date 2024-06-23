@@ -10,6 +10,8 @@ const mqtt = require("mqtt");
 const SchellenbergAPIConnector = require("../services/SchellenbergAPIConnector");
 const LogService = require("schellenbergapi/Service/LogService");
 
+var deviceMap;
+
 class MQTTController {
   /**
    * The MQTT controller, handles MQTT messages between external clients and Schellenberg API.
@@ -22,6 +24,9 @@ class MQTTController {
 
     // Schellenberg API
     this.apiConnector = new SchellenbergAPIConnector(config).getInstance();
+
+    // Create up/stop/down mapping
+    this.valueMapping = new Map([['open', config.payload.open], ['close', config.payload.close], ['stop', config.payload.stop]]);
 
     // Create MQTT client
     this.connect(config.mqtt.url, config.mqtt.username, config.mqtt.password);
@@ -75,7 +80,7 @@ class MQTTController {
     // OUT: SmartFriends ==> Controller ==> MQTT Broker
     // Topic example: schellenberg/device/value/xxxxx
     this.apiConnector.api.on("newDV", (data) =>
-      this.publishDeviceStatus(data.deviceID, data.value)
+      this.publishDeviceStatus(data)
     );
 
     this.apiConnector.api.on("newDI", (data) => {
@@ -85,6 +90,8 @@ class MQTTController {
       this.logService.debug(" > masterDeviceName:  " + data.masterDeviceName);
       this.logService.debug(" > deviceName:        " + data.deviceName);
       this.logService.debug(" > deviceDesignation: " + data.deviceDesignation);
+      // Update deviceMap
+      deviceMap = this.apiConnector.getDeviceMap();
     });
   }
 
@@ -109,19 +116,50 @@ class MQTTController {
    * @param {number} deviceID the device's ID to operate
    * @param {string} value the new device value to publish
    */
-  publishDeviceStatus(deviceID, value) {
-    if (deviceID !== "" && value !== "") {
-      var topic = "schellenberg/device/value/" + deviceID;
+  publishDeviceStatus(data) {
+    if (data.deviceID !== "" && data.value !== "") {
+      let topic = "schellenberg/device/value/" + data.deviceID;
       var message;
       try{
-        message = JSON.stringify(value);
+        message = JSON.stringify(data.value);
       } catch (e) {
-        message = value.toString();
+        message = data.value.toString();
       }
 
       this.logService.debug(topic + " => " + message, "MQTTController");
       var options = { retain: true, qos: 0 };
       this.client.publish(topic, message, options);
+
+      // Set target position when 'up' or 'down' command
+      if (deviceMap.get(data.deviceID)['deviceName'] == 'Schalter' && (message === this.valueMapping.get('open') || message === this.valueMapping.get('close'))) {
+        for (const [key, value] of deviceMap) {
+          if (value.masterDeviceID === data.masterDeviceID && value.deviceName === 'Position') {
+            let topic = "schellenberg/device/value/" + key;  // or topic /update/ ?
+            var position = '0';
+            if (message === this.valueMapping.get('close')) {
+              position = '100';
+            }
+            this.logService.debug(topic + " => " + position, "MQTTController");
+            this.client.publish(topic, position, options);
+          }
+        }
+      }
+
+      // Set current position and position state
+      if (data.floatValue) {
+        let topic = "schellenberg/device/value/current/" + data.deviceID;
+        this.logService.debug(topic + " => " + message, "MQTTController");
+        this.client.publish(topic, message, options);
+        if (data.value === 0 || data.value === 100) {
+          for (const [key, value] of deviceMap) {
+            if (value.masterDeviceID === data.masterDeviceID && value.deviceName === 'Schalter') {
+              let topic = "schellenberg/device/value/update/" + key;
+              this.logService.debug(topic + " => " + this.valueMapping.get('stop'), "MQTTController");
+              this.client.publish(topic, this.valueMapping.get('stop'), options);
+            }
+          }
+        }
+      }
     }
   }
 }

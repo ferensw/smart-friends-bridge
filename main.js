@@ -48,6 +48,11 @@ let myConfig = {
     },
     web: {
         port: config?.web?.port || 80
+    },
+    payload: {
+        open: config.payload.open,
+        close: config.payload.close,
+        stop: config.payload.stop
     }
 };
 
