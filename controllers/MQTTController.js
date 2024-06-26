@@ -155,6 +155,7 @@ class MQTTController {
             if (value.masterDeviceID === data.masterDeviceID && value.deviceName === 'Schalter') {
               let topic = "schellenberg/device/value/update/" + key;
               this.logService.debug(topic + " => " + this.valueMapping.get('stop'), "MQTTController");
+              let options = { retain: false, qos: 0 };
               this.client.publish(topic, this.valueMapping.get('stop'), options);
             }
           }
